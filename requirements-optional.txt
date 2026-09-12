@@ -1,0 +1,2 @@
+# Needed only to composite PNG overlays on still images.
+Pillow>=10.0
