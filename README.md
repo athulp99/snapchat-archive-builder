@@ -6,11 +6,12 @@ paths inside a Snapchat ZIP are retained instead of silently being overwritten.
 
 ## Quick start
 
-Put every `mydata*.zip` export in a single folder. Keep the ZIPs unchanged.
+Pass one export ZIP to test it, or put every `mydata*.zip` export in a single
+folder for the complete archive. Keep the ZIPs unchanged.
 
 ```bash
 python3 snapchat_archive.py scan \
-  --input "/Users/you/Downloads/Snapchat exports" \
+  --input "/Users/you/Downloads/mydata~1789158680787.zip" \
   --output "/Users/you/Desktop/Snapchat Library"
 
 python3 snapchat_archive.py convert \
@@ -21,6 +22,35 @@ python3 snapchat_archive.py convert \
 `convert` creates date folders, a local `Open Gallery.html`, a CSV item report,
 and a `Needs Review` directory for overlays, thumbnails, and unresolved assets.
 Run `convert` again after interruption; completed source entries are reused.
+
+## Review and remove videos
+
+Run `gallery` after upgrading the script to add video marking controls to an
+existing library:
+
+```bash
+python3 snapchat_archive.py gallery --output "/Users/you/Desktop/Snapchat Library"
+```
+
+In `Open Gallery.html`, mark videos and use **Export selection**. The exported
+`marked-videos.json` includes each video path and SHA-256 hash. Move only those
+verified videos into the library's recoverable `Removed` folder:
+
+```bash
+python3 snapchat_archive.py remove-marked \
+  --output "/Users/you/Desktop/Snapchat Library" \
+  --selection "/Users/you/Downloads/marked-videos.json"
+```
+
+Restore every removed video at any point:
+
+```bash
+python3 snapchat_archive.py restore-removed \
+  --output "/Users/you/Desktop/Snapchat Library"
+```
+
+Each action is written to `Reports/removal-log.csv`. Nothing is permanently
+deleted and the source ZIPs remain unchanged.
 
 ## What it does now
 
