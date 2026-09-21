@@ -23,34 +23,90 @@ python3 snapchat_archive.py convert \
 and a `Needs Review` directory for overlays, thumbnails, and unresolved assets.
 Run `convert` again after interruption; completed source entries are reused.
 
-## Review and remove videos
+## Full batch with verified source deletion
 
-Run `gallery` after upgrading the script to add video marking controls to an
+Use `batch` for limited disk space. It processes ZIPs in numeric part order,
+verifies every entry against saved bytes, writes a receipt, and proceeds to the
+next archive. It preserves the existing library and video removal state.
+
+```bash
+python3 snapchat_archive.py batch \
+  --input "/Users/ap/Downloads" \
+  --pattern "mydata~1789158680787*.zip" \
+  --output "/Users/ap/Desktop/Snapchat Test" \
+  --delete-verified-zips
+```
+
+**`--delete-verified-zips` permanently deletes each verified source ZIP.** It does
+not use or empty the Bin. The extracted files become your remaining local copy.
+Omit this flag to retain the ZIPs. Do not edit/move library files or run another
+converter or removal command during the batch.
+
+Before each new archive the command requires its uncompressed size plus 5 GB of
+free space. CRC errors, changed or missing outputs, unsafe ZIP paths, and failed
+writes stop processing while retaining the affected source. Duplicate paths in
+ZIPs are processed separately; byte-identical entries share verified saved files.
+Overlays and all auxiliary content are retained for later review, not discarded.
+Verification proves byte preservation, not successful overlay matching or video
+decodability.
+
+Rerun the same command after interruption. Archive fingerprints identify completed
+content even if its ZIP was renamed. Reappearing ZIP copies are deleted only after
+their saved outputs are rechecked. Changed content at an existing recorded path
+is rejected rather than replacing previous history. The first test ZIP is fully
+reverified before deletion.
+
+`Reports/archive-progress.csv` records archive states and errors;
+`Reports/archive-receipts/` preserves per-entry hashes and source positions.
+`.archive/manifest-backup.sqlite` is refreshed before and after source deletion.
+The gallery and normal reports refresh after each archive. Keep the `.archive`
+folder with the library: it contains the completion history needed for resuming.
+
+Run fixture tests with `python3 -m unittest -v test_batch`.
+
+## Browse, filter and remove photos or videos
+
+Run `gallery` after upgrading the script to add browsing and marking controls to an
 existing library:
 
 ```bash
 python3 snapchat_archive.py gallery --output "/Users/you/Desktop/Snapchat Library"
 ```
 
-In `Open Gallery.html`, mark videos and use **Export selection**. The exported
-`marked-videos.json` includes each video path and SHA-256 hash. Move only those
-verified videos into the library's recoverable `Removed` folder:
+The self-contained gallery supports filename search, media type, date ranges,
+undated files, size ranges, marks and duplicate-reference filters. Sort by date,
+size, filename or reference count, and optionally group by day. Each page shows
+up to 100 items, with uncropped previews loaded near the viewport.
+
+Multiple export references already share one saved file: they are not redundant
+physical copies to delete. Dates are export-derived. File sizes use decimal MB.
+
+Mark individual photos/videos or the current page, then use **Export selection**.
+`marked-media.json` includes each file path and SHA-256 hash (v2 format).
+Older v1 `marked-videos.json` exports still work. Import replaces marks only if
+every entry matches an active file and its hash. Filters and marks are saved
+separately per library when browser storage is available. Export selections to
+transfer marks between browsers or locations.
+
+Move the selected files into the library's recoverable `Removed` folder:
 
 ```bash
 python3 snapchat_archive.py remove-marked \
   --output "/Users/you/Desktop/Snapchat Library" \
-  --selection "/Users/you/Downloads/marked-videos.json"
+  --selection "/Users/you/Downloads/marked-media.json"
 ```
 
-Restore every removed video at any point:
+The entire selection is validated before any moves. A rejected entry prevents
+all moves. Restore every removed photo and video at any point:
 
 ```bash
 python3 snapchat_archive.py restore-removed \
   --output "/Users/you/Desktop/Snapchat Library"
 ```
 
-Each action is written to `Reports/removal-log.csv`. Nothing is permanently
-deleted and the source ZIPs remain unchanged.
+Each media move/restore action is written to `Reports/removal-log.csv`. These
+commands never permanently delete media or source ZIPs; source deletion is a
+separate opt-in batch operation.
 
 ## What it does now
 

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Build an auditable, local library from Snapchat My Data ZIP exports.
 
-The program intentionally never modifies input archives. It indexes members by
+Source deletion is available only through the opt-in verified batch command.
+The program indexes members by
 their position in the central directory because Snapchat exports can contain the
 same path more than once.
 """
@@ -195,28 +196,8 @@ def output_name(entry: sqlite3.Row, ordinal: int) -> Path:
 
 
 def render_gallery(output: Path, db: sqlite3.Connection) -> None:
-    media = db.execute("""SELECT output_path,removed_path,captured_at,extension,sha256 FROM entries
-                        WHERE output_path IS NOT NULL AND asset_kind='media'
-                        GROUP BY output_path,removed_path ORDER BY captured_at DESC, output_path DESC""").fetchall()
-    cards, videos = [], []
-    for row in media:
-        active_path = row["removed_path"] or row["output_path"]
-        rel, label = html.escape(active_path), html.escape(row["captured_at"] or "Undated")
-        is_video, removed = row["extension"] in VIDEO_EXTENSIONS, bool(row["removed_path"])
-        content = f'<video controls preload="metadata" src="{rel}"></video>' if is_video else f'<img loading="lazy" src="{rel}" alt="{label}">'
-        button = "" if not is_video or removed else f'<button class="mark" data-path="{html.escape(row["output_path"])}">Mark for removal</button>'
-        moved = "<strong>Moved to Removed</strong>" if removed else ""
-        cards.append(f'<article class="card{" removed" if removed else ""}" data-video="{str(is_video).lower()}" data-removed="{str(removed).lower()}" data-path="{html.escape(row["output_path"])}">{content}<p>{label}</p>{moved}{button}</article>')
-        if is_video and not removed:
-            videos.append({"path": row["output_path"], "sha256": row["sha256"]})
-    video_data = json.dumps(videos, separators=(",", ":")).replace("<", "\\u003c")
-    page = """<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Snapchat Library</title>
-<style>:root{color-scheme:dark}body{background:#101114;color:#eee;font:16px system-ui;margin:0;padding:24px}h1{margin:0 0 6px}p,.note{color:#abb0bb}.toolbar{display:flex;flex-wrap:wrap;gap:9px;align-items:center;margin:20px 0}.toolbar button,.toolbar label{border:1px solid #4c5260;border-radius:7px;background:#242833;color:#fff;padding:9px 12px;font:inherit;cursor:pointer}.toolbar input{display:none}.count{margin-left:auto;color:#aab1be}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px}.card{background:#1b1d23;border-radius:10px;overflow:hidden;padding-bottom:10px}.card.removed{opacity:.65}.card.marked{outline:3px solid #e26464;background:#321d24}.card[hidden]{display:none}img,video{display:block;width:100%;aspect-ratio:9/16;object-fit:cover;background:#000}.card p,.card strong{display:block;margin:10px;font-size:13px}.card strong{color:#f39b9b}.mark{margin:0 10px;border:1px solid #b65050;background:#4a2026;color:#fff;padding:7px 9px;border-radius:6px;cursor:pointer;font:inherit}.mark.selected{background:#d76666;border-color:#ed9292}</style>
-<h1>Snapchat Library</h1><p class="note">Mark videos, export your selection, then use the Python removal command. Marking does not move files.</p>
-<div class="toolbar"><button id="filter">Show marked only</button><button id="clear">Clear marks</button><button id="export">Export selection</button><label>Import selection<input id="import" type="file" accept="application/json,.json"></label><button id="removed">Show removed videos</button><span class="count" id="count"></span></div>
-<p id="removed-note" class="note" hidden>These videos are in <code>Removed</code>. Restore with <code>restore-removed</code>, then regenerate the gallery.</p><main class="grid">""" + "\n".join(cards) + "</main>" + """
-<script>const videos=__VIDEOS__;const key='snapchat-removal-selection-v1';let marked=new Set(JSON.parse(localStorage.getItem(key)||'[]')),markedOnly=false,removedOnly=false;function save(){localStorage.setItem(key,JSON.stringify([...marked]))}function paint(){document.querySelectorAll('.card').forEach(c=>{const p=c.dataset.path,v=c.dataset.video==='true',r=c.dataset.removed==='true';c.classList.toggle('marked',marked.has(p));const b=c.querySelector('.mark');if(b){b.classList.toggle('selected',marked.has(p));b.textContent=marked.has(p)?'Marked for removal':'Mark for removal'}c.hidden=(markedOnly&&(!v||!marked.has(p)))||(removedOnly&&!r)||(!removedOnly&&r)});document.querySelector('#count').textContent=marked.size+' video'+(marked.size===1?'':'s')+' marked';document.querySelector('#filter').textContent=markedOnly?'Show all active media':'Show marked only';document.querySelector('#removed').textContent=removedOnly?'Back to library':'Show removed videos';document.querySelector('#removed-note').hidden=!removedOnly}document.querySelectorAll('.mark').forEach(b=>b.onclick=()=>{const p=b.dataset.path;marked.has(p)?marked.delete(p):marked.add(p);save();paint()});document.querySelector('#filter').onclick=()=>{markedOnly=!markedOnly;removedOnly=false;paint()};document.querySelector('#removed').onclick=()=>{removedOnly=!removedOnly;markedOnly=false;paint()};document.querySelector('#clear').onclick=()=>{marked.clear();save();paint()};document.querySelector('#export').onclick=()=>{const chosen=videos.filter(v=>marked.has(v.path));const blob=new Blob([JSON.stringify({format:'snapchat-removal-selection-v1',created_at:new Date().toISOString(),videos:chosen},null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='marked-videos.json';a.click();URL.revokeObjectURL(a.href)};document.querySelector('#import').onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{const d=JSON.parse(r.result),known=new Set(videos.map(v=>v.path));if(!Array.isArray(d.videos))throw Error();marked=new Set(d.videos.map(v=>v.path).filter(p=>known.has(p)));save();paint()}catch(x){alert('Could not import this selection file.')}};r.readAsText(f)};paint()</script>"""
-    (output / "Open Gallery.html").write_text(page.replace("__VIDEOS__", video_data), encoding="utf-8")
+    from gallery import render
+    render(output, db)
 
 
 def write_reports(output: Path, db: sqlite3.Connection) -> None:
@@ -256,13 +237,18 @@ def load_selection(path: Path) -> list[dict[str, str]]:
         doc = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise SystemExit(f"Cannot read selection file: {exc}")
-    if doc.get("format") != "snapchat-removal-selection-v1" or not isinstance(doc.get("videos"), list):
+    field = {"snapchat-removal-selection-v1": "videos", "snapchat-removal-selection-v2": "items"}.get(doc.get("format")) if isinstance(doc, dict) else None
+    if not field or not isinstance(doc.get(field), list):
         raise SystemExit("Selection file is not a Snapchat gallery export.")
     selected = []
-    for item in doc["videos"]:
+    hashes = {}
+    for item in doc[field]:
         if not isinstance(item, dict) or not isinstance(item.get("path"), str) or not isinstance(item.get("sha256"), str):
-            raise SystemExit("Selection contains an invalid video entry.")
+            raise SystemExit("Selection contains an invalid media entry.")
         selected.append({"path": item["path"], "sha256": item["sha256"]})
+        if item['path'] in hashes and hashes[item['path']] != item['sha256']:
+            raise SystemExit('Conflicting hashes for the same selected path; no files moved.')
+        hashes[item['path']] = item['sha256']
     return selected
 
 
@@ -270,38 +256,46 @@ def remove_marked(output: Path, selection_path: Path) -> None:
     db = database(output)
     selected = load_selection(selection_path)
     planned = []
+    rejected = False
     for item in {entry["path"]: entry for entry in selected}.values():
         path, digest = item["path"], item["sha256"]
         row = db.execute("""SELECT output_path,sha256,extension FROM entries
                             WHERE output_path=? AND asset_kind='media' AND removed_path IS NULL
                             LIMIT 1""", (path,)).fetchone()
-        if not row or row["extension"] not in VIDEO_EXTENSIONS:
-            log_removal(db, "move", path, None, digest, "rejected", "Not an active video in this library.")
+        if not row or row["extension"] not in MEDIA_EXTENSIONS:
+            rejected = True
+            log_removal(db, "move", path, None, digest, "rejected", "Not active media in this library.")
             continue
         try:
+            if PurePosixPath(path).parts[0] != 'Media':
+                raise ValueError('Selected path is not inside Media')
             source = library_path(output, path)
-        except ValueError as exc:
+            target_rel = str(Path('Removed') / Path(path).relative_to('Media'))
+            target = library_path(output, target_rel)
+            if row['sha256'] != digest or not source.is_file() or sha256_path(source) != digest:
+                raise ValueError('Hash mismatch or source file is missing.')
+        except (ValueError, OSError, IndexError) as exc:
+            rejected = True
             log_removal(db, "move", path, None, digest, "rejected", str(exc)); continue
-        if row["sha256"] != digest or not source.is_file() or sha256_path(source) != digest:
-            log_removal(db, "move", path, None, digest, "rejected", "Hash mismatch or source file is missing.")
-            continue
-        target_rel = str(Path("Removed") / Path(path).relative_to("Media"))
-        target = library_path(output, target_rel)
         if target.exists():
+            rejected = True
             log_removal(db, "move", path, target_rel, digest, "rejected", "Destination already exists.")
             continue
         planned.append((path, target_rel, source, target, digest))
     db.commit()
+    if rejected:
+        write_reports(output, db)
+        raise SystemExit("Selection rejected; no files moved. See Reports/removal-log.csv.")
     if not planned:
         write_reports(output, db)
-        raise SystemExit("No selected videos passed validation; see Reports/removal-log.csv.")
+        raise SystemExit("No selected media passed validation; see Reports/removal-log.csv.")
     for path, target_rel, source, target, digest in planned:
         target.parent.mkdir(parents=True, exist_ok=True)
         os.replace(source, target)
         db.execute("UPDATE entries SET removed_path=?,removed_at=? WHERE output_path=?", (target_rel, datetime.now().isoformat(timespec="seconds"), path))
         log_removal(db, "move", path, target_rel, digest, "moved")
     db.commit(); render_gallery(output, db); write_reports(output, db)
-    print(f"Moved {len(planned)} video(s) to {output / 'Removed'}.")
+    print(f"Moved {len(planned)} media file(s) to {output / 'Removed'}.")
 
 
 def restore_removed(output: Path) -> None:
@@ -320,7 +314,7 @@ def restore_removed(output: Path) -> None:
         log_removal(db, "restore", row["output_path"], row["removed_path"], row["sha256"], "restored")
         restored += 1
     db.commit(); render_gallery(output, db); write_reports(output, db)
-    print(f"Restored {restored} video(s).")
+    print(f"Restored {restored} media file(s).")
 
 
 def convert(output: Path) -> None:
@@ -378,14 +372,25 @@ def main() -> None:
     convert_parser.add_argument("--output", type=Path, required=True)
     gallery_parser = sub.add_parser("gallery", help="regenerate the offline gallery and reports")
     gallery_parser.add_argument("--output", type=Path, required=True)
-    remove_parser = sub.add_parser("remove-marked", help="move videos selected in an exported gallery list")
+    remove_parser = sub.add_parser("remove-marked", help="move photos and videos selected in an exported gallery list")
     remove_parser.add_argument("--output", type=Path, required=True)
     remove_parser.add_argument("--selection", type=Path, required=True)
-    restore_parser = sub.add_parser("restore-removed", help="restore all videos moved to Removed")
+    restore_parser = sub.add_parser("restore-removed", help="restore all media moved to Removed")
     restore_parser.add_argument("--output", type=Path, required=True)
+    batch_parser = sub.add_parser("batch", help="sequential extraction with verified, opt-in source deletion")
+    batch_parser.add_argument("--input", type=Path, required=True)
+    batch_parser.add_argument("--output", type=Path, required=True)
+    batch_parser.add_argument("--pattern", default="mydata*.zip")
+    batch_parser.add_argument("--delete-verified-zips", action="store_true")
     args = parser.parse_args()
     output = args.output.expanduser()
     if args.command == "scan": scan(args.input.expanduser(), output)
+    elif args.command == "batch":
+        from snapchat_batch import batch
+        try:
+            batch(args.input, output, args.pattern, args.delete_verified_zips)
+        except (OSError, ValueError, zipfile.BadZipFile) as exc:
+            parser.exit(1, f"Batch stopped: {exc}\nSources not yet verified remain in place.\n")
     elif args.command == "convert": convert(output)
     elif args.command == "gallery":
         db = database(output); render_gallery(output, db); write_reports(output, db)

@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Snapchat Library</title>
+<style>
+:root{color-scheme:dark;font:15px system-ui;background:#101216;color:#edf1f5}body{margin:0;padding:24px;max-width:1600px;margin:auto}h1{margin:0}p{line-height:1.5}.note,small{color:#afb9c9}button,input,select{font:inherit;border:1px solid #596478;background:#202733;color:inherit;border-radius:7px;padding:9px}button{cursor:pointer}button:hover{background:#334258}button:disabled{opacity:.45;cursor:default}button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid #72b4ff}label{display:flex;flex-direction:column;gap:5px;font-size:13px}input[type=checkbox]{width:auto}.controls,.actions,.presets,.pager{display:flex;flex-wrap:wrap;gap:12px;align-items:end;margin:16px 0}.controls{background:#191e27;padding:16px;border-radius:12px}.controls input{max-width:160px}.controls #search{max-width:320px;min-width:230px}.summary{display:flex;flex-wrap:wrap;gap:20px;justify-content:space-between;padding:14px 0;border-bottom:1px solid #394251}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:18px;margin-top:18px}.card{background:#1b222d;border:2px solid transparent;border-radius:12px;overflow:hidden}.card.marked{border-color:#ff929a}.card img,.card video{display:block;width:100%;height:300px;object-fit:contain;background:#080a0d}.body{padding:12px}.body p{margin:0 0 8px}.body button{width:100%}.card.marked button{background:#692f40}details{margin:10px 0;font-size:12px;overflow-wrap:anywhere}details ul{padding-left:20px}.day{grid-column:1/-1;margin:12px 0 0}.pager{justify-content:center}.import{display:inline-block;cursor:pointer;border:1px solid #596478;border-radius:7px;padding:9px;background:#202733;font-size:15px}.import input{max-width:200px}.warning{color:#ffd185}.badge{color:#a9cdfb}.empty{grid-column:1/-1;padding:40px;text-align:center}[hidden]{display:none!important}@media(max-width:600px){body{padding:12px}.controls label{flex:1;min-width:130px}.controls #search{min-width:0;width:90%}}
+</style></head><body>
+<h1>Snapchat Library</h1>
+<p class="note">Browse, compare and mark photos or videos for removal. Export your marks to use the reversible removal command. Dates come from export filenames and timestamps.</p>
+<div class="presets" aria-label="Quick filters"><button data-preset="videos">Largest videos</button><button data-preset="photos">Largest photos</button><button data-preset="duplicates">Duplicate references</button><button data-preset="marked">Marked for removal</button></div>
+<div class="controls">
+<label>Search filenames<input id="search" type="search" placeholder="Original or saved filename"></label>
+<label>View<select id="view"><option value="active">Active library</option><option value="removed">Removed media</option></select></label>
+<label>Media<select id="type"><option value="all">Photos and videos</option><option value="photo">Photos</option><option value="video">Videos</option></select></label>
+<label>Dates<select id="dates"><option value="all">All dates</option><option value="dated">Dated only</option><option value="undated">Undated only</option></select></label>
+<label>From<input id="from" type="date"></label><label>Through<input id="to" type="date"></label>
+<label>Minimum MB<input id="min" type="number" min="0" step="any" placeholder="0"></label><label>Maximum MB<input id="max" type="number" min="0" step="any" placeholder="Any"></label>
+<label>Marks<select id="marks"><option value="all">All</option><option value="marked">Marked</option><option value="unmarked">Unmarked</option></select></label>
+<label>Export references<select id="refs"><option value="all">All files</option><option value="duplicates">Multiple references</option></select></label>
+<label>Sort<select id="sort"><option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="largest">Largest first</option><option value="smallest">Smallest first</option><option value="filename">Filename</option><option value="refs">Most duplicate references</option></select></label>
+<label>Layout<select id="group"><option value="none">Continuous grid</option><option value="day">Group by day</option></select></label><button id="reset">Reset filters</button>
+</div>
+<p class="note">Multiple export references already share one saved file. They do not represent extra copies you can delete to reclaim space. Group by day to compare your photos and videos manually. Sizes use decimal MB.</p>
+<p id="restore-note" class="note" hidden>These files are in Removed. Use <code>python3 snapchat_archive.py restore-removed --output "/Volumes/Backup Plus/Snapchat Test"</code> to restore them.</p>
+<p id="storage-note" class="warning" hidden>Browser storage is unavailable or was unreadable. Export your selection to keep a copy of your marks.</p>
+<div class="summary" aria-live="polite"><span id="matches"></span><span id="marked-summary"></span></div>
+<div class="actions"><button id="mark-page">Mark this page</button><button id="unmark-page">Unmark this page</button><button id="clear">Clear all marks</button><button id="export">Export selection</button><label class="import">Import selection <input id="import" type="file" accept="application/json,.json"></label></div>
+<div class="pager"><button id="prev">Previous</button><span id="page-info"></span><button id="next">Next</button></div>
+<main id="grid" class="grid"></main>
+<script>
+'use strict';
+const DATA=__GALLERY_DATA__;
+const items=DATA.items, known=new Map(items.map(x=>[x.path,x]));
+items.forEach(x=>x.search=(x.path+' '+x.sources.join(' ')).toLowerCase());
+const $=id=>document.getElementById(id), base='snapchat-gallery:'+DATA.library_id;
+const defaults={search:'',view:'active',type:'all',dates:'all',from:'',to:'',min:'',max:'',marks:'all',refs:'all',sort:'newest',group:'none'};
+let state={...defaults}, marked=new Set(), page=0, visible=[], matching=[];
+function read(key){try{const raw=localStorage.getItem(key);return raw===null?null:JSON.parse(raw)}catch(e){$('storage-note').hidden=false;return null}}
+function write(key,value){try{localStorage.setItem(key,JSON.stringify(value))}catch(e){$('storage-note').hidden=false}}
+const previous=read(base+':filters');
+if(previous&&typeof previous==='object')for(const k of Object.keys(defaults))if(typeof previous[k]==='string')state[k]=previous[k];
+const stored=read(base+':marks');
+const old=stored===null?read('snapchat-removal-selection-v1'):null;
+const saved=stored===null?old:stored;
+if(Array.isArray(saved))marked=new Set(saved.filter(p=>known.has(p)&&!known.get(p).removed));
+else if(saved!==null)$('storage-note').hidden=false;
+function saveMarks(){write(base+':marks',[...marked])}
+saveMarks();
+function controls(){for(const k of Object.keys(defaults)){const el=$(k);el.value=state[k];if(el.value!==state[k])state[k]=el.value||defaults[k]}$('from').disabled=$('to').disabled=state.dates==='undated'}
+function size(n){if(n>=1e9)return (n/1e9).toFixed(2)+' GB';if(n>=1e6)return (n/1e6).toFixed(1)+' MB';return (n/1e3).toFixed(1)+' KB'}
+function compare(a,b){let d=0;if(state.sort==='newest'||state.sort==='oldest'){if(!a.date!==!b.date)return a.date?-1:1;d=a.date.localeCompare(b.date)*(state.sort==='newest'?-1:1)}else if(state.sort==='largest')d=b.size-a.size;else if(state.sort==='smallest')d=a.size-b.size;else if(state.sort==='refs')d=b.refs-a.refs;return d||a.path.localeCompare(b.path)}
+function selectItems(){const q=state.search.trim().toLowerCase();let result=items.filter(x=>{
+ if(x.removed!==(state.view==='removed')||(state.type!=='all'&&x.type!==state.type))return false;
+ if(q&&!x.search.includes(q))return false;
+ if(state.dates==='undated'){if(x.date)return false}else{if(state.dates==='dated'&&!x.date)return false;if(state.from&&(!x.date||x.date.slice(0,10)<state.from))return false;if(state.to&&(!x.date||x.date.slice(0,10)>state.to))return false}
+ if(state.min!==''&&x.size<Number(state.min)*1e6||state.max!==''&&x.size>Number(state.max)*1e6)return false;
+ if(state.marks==='marked'&&!marked.has(x.path)||state.marks==='unmarked'&&marked.has(x.path))return false;
+ return state.refs!=='duplicates'||x.refs>1;
+ });
+ result.sort((a,b)=>{if(state.group==='day'){const ad=a.date.slice(0,10),bd=b.date.slice(0,10);if(ad!==bd){if(!ad||!bd)return ad?-1:1;return ad.localeCompare(bd)*(state.sort==='oldest'?1:-1)}}return compare(a,b)});return result;
+}
+const observer='IntersectionObserver' in window?new IntersectionObserver(entries=>{for(const {target,isIntersecting} of entries){if(isIntersecting){if(!target.hasAttribute('src')){target.src=target.dataset.src;if(target.tagName==='VIDEO')target.load()}}else if(target.tagName==='VIDEO'){target.pause();target.removeAttribute('src');target.load()}}},{rootMargin:'200px'}):null;
+function node(tag,text,cls){const el=document.createElement(tag);if(text!==undefined)el.textContent=text;if(cls)el.className=cls;return el}
+function paint(){matching=selectItems();page=Math.max(0,Math.min(page,Math.ceil(matching.length/100)-1));visible=matching.slice(page*100,(page+1)*100);
+ if(observer)observer.disconnect();$('grid').querySelectorAll('video').forEach(v=>{v.pause();v.removeAttribute('src');v.load()});$('grid').replaceChildren();
+ let day=null;for(const x of visible){const date=x.date.slice(0,10)||'Undated';if(state.group==='day'&&day!==date){$('grid').append(node('h2',date,'day'));day=date}
+ const card=node('article',undefined,'card'+(marked.has(x.path)?' marked':''));card.dataset.path=x.path;
+ const media=node(x.type==='video'?'video':'img');media.dataset.src=x.actual.split('/').map(encodeURIComponent).join('/');
+ if(x.type==='video'){media.controls=true;media.preload='metadata'}else{media.loading='lazy';media.alt=x.date||'Undated photo'}card.append(media);
+ const body=node('div',undefined,'body');body.append(node('p',x.date||'Undated'),node('p',(x.type==='video'?'Video':'Photo')+' · '+size(x.size)));
+ if(x.refs>1)body.append(node('p',x.refs+' export references · one saved file','badge'));
+ const details=node('details');details.append(node('summary','Filenames & details'),node('p',x.path));const list=node('ul');x.sources.forEach(s=>list.append(node('li',s)));details.append(list);body.append(details);
+ if(!x.removed){const b=node('button',marked.has(x.path)?'Marked for removal':'Mark for removal');b.setAttribute('aria-pressed',marked.has(x.path));b.onclick=()=>{marked.has(x.path)?marked.delete(x.path):marked.add(x.path);saveMarks();paint()};body.append(b)}else body.append(node('p','Moved to Removed'));
+ card.append(body);$('grid').append(card);if(observer)observer.observe(media);else if(media.tagName==='IMG')media.src=media.dataset.src;else media.addEventListener('click',()=>{if(!media.src){media.src=media.dataset.src;media.play().catch(()=>{})}},{once:true});
+ }
+ if(!visible.length)$('grid').append(node('p','No files match these filters. Try Reset filters.','empty'));
+ $('matches').textContent=matching.length.toLocaleString()+' matching files · '+size(matching.reduce((n,x)=>n+x.size,0));
+ $('marked-summary').textContent=marked.size.toLocaleString()+' marked overall · '+size([...marked].reduce((n,p)=>n+known.get(p).size,0));
+ $('page-info').textContent='Page '+(page+1)+' of '+Math.max(1,Math.ceil(matching.length/100));$('prev').disabled=page===0;$('next').disabled=(page+1)*100>=matching.length;
+ $('restore-note').hidden=state.view!=='removed';$('mark-page').disabled=$('unmark-page').disabled=state.view==='removed'||!visible.length;
+}
+let timer;for(const k of Object.keys(defaults))$(k).addEventListener(k==='search'?'input':'change',()=>{clearTimeout(timer);const update=()=>{state[k]=$(k).value;page=0;controls();write(base+':filters',state);paint()};if(k==='search')timer=setTimeout(update,150);else update()});
+function reset(){state={...defaults};page=0;controls()}
+$('reset').onclick=()=>{clearTimeout(timer);reset();write(base+':filters',state);paint()};
+document.querySelectorAll('[data-preset]').forEach(b=>b.onclick=()=>{reset();const p=b.dataset.preset;if(p==='videos'||p==='photos'){state.type=p==='videos'?'video':'photo';state.sort='largest'}else if(p==='duplicates'){state.refs='duplicates';state.sort='refs'}else state.marks='marked';controls();write(base+':filters',state);paint()});
+$('prev').onclick=()=>{page--;paint()};$('next').onclick=()=>{page++;paint()};
+$('mark-page').onclick=()=>{visible.filter(x=>!x.removed).forEach(x=>marked.add(x.path));saveMarks();paint()};
+$('unmark-page').onclick=()=>{visible.forEach(x=>marked.delete(x.path));saveMarks();paint()};
+$('clear').onclick=()=>{if(marked.size&&confirm('Clear all '+marked.size+' removal marks?')){marked.clear();saveMarks();paint()}};
+$('export').onclick=()=>{const selected=items.filter(x=>marked.has(x.path)).map(x=>({path:x.path,sha256:x.sha256}));const blob=new Blob([JSON.stringify({format:'snapchat-removal-selection-v2',created_at:new Date().toISOString(),items:selected},null,2)],{type:'application/json'});const a=node('a');a.href=URL.createObjectURL(blob);a.download='marked-media.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)};
+$('import').onchange=async e=>{const f=e.target.files[0];if(!f)return;try{const d=JSON.parse(await f.text());const chosen=d&&d.format==='snapchat-removal-selection-v1'?d.videos:d&&d.format==='snapchat-removal-selection-v2'?d.items:null;if(!Array.isArray(chosen))throw Error('Unrecognized selection format');const next=new Set();for(const x of chosen){if(!x||!known.has(x.path)||known.get(x.path).sha256!==x.sha256||known.get(x.path).removed)throw Error('A selected file is unknown, removed, or has a different hash');next.add(x.path)}marked=next;saveMarks();paint()}catch(err){alert('Selection not imported: '+err.message)}finally{e.target.value=''}};
+controls();paint();
+</script></body></html>
